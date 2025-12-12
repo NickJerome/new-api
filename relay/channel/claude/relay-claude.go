@@ -357,6 +357,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 						Type: mediaMessage.Type,
 					}
 					if mediaMessage.Type == "text" {
+						// 跳过空的文本块，Anthropic API 不允许空文本
+						if mediaMessage.Text == "" {
+							continue
+						}
 						claudeMediaMessage.Text = common.GetPointer[string](mediaMessage.Text)
 					} else {
 						imageUrl := mediaMessage.GetImageMedia()
