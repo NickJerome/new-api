@@ -410,6 +410,29 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		claudeRequest.System = systemMessages
 	}
 
+	// 自动给最后一条消息的最后一个内容块添加 cache_control
+	if len(claudeMessages) > 0 {
+		lastMessage := &claudeMessages[len(claudeMessages)-1]
+
+		// 处理数组类型的 content
+		if contentArray, ok := lastMessage.Content.([]dto.ClaudeMediaMessage); ok && len(contentArray) > 0 {
+			lastContent := &contentArray[len(contentArray)-1]
+			if lastContent.CacheControl == nil {
+				lastContent.CacheControl = json.RawMessage(`{"type":"ephemeral"}`)
+			}
+			lastMessage.Content = contentArray
+		} else if contentStr, ok := lastMessage.Content.(string); ok && contentStr != "" {
+			// 处理字符串类型的 content，转换为数组格式并添加 cache_control
+			lastMessage.Content = []dto.ClaudeMediaMessage{
+				{
+					Type:         "text",
+					Text:         common.GetPointer[string](contentStr),
+					CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+				},
+			}
+		}
+	}
+
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	return &claudeRequest, nil
