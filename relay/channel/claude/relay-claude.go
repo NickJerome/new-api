@@ -405,36 +405,75 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		}
 	}
 
-	// 设置累积的system消息
+	// 设置累积的system消息，并给最后一个 system 块添加 cache_control
 	if len(systemMessages) > 0 {
+		// 给 system 的最后一个块添加 cache_control（这是最重要的，因为 system 通常最长）
+		// 使用 1h TTL 以获得更长的缓存时间
+		lastSystemMsg := &systemMessages[len(systemMessages)-1]
+		if lastSystemMsg.CacheControl == nil {
+			lastSystemMsg.CacheControl = json.RawMessage(`{"type":"ephemeral","ttl":"1h"}`)
+			systemMessages[len(systemMessages)-1] = *lastSystemMsg
+			if common.DebugEnabled {
+				common.SysLog("Added cache_control (1h TTL) to last system message")
+			}
+		}
 		claudeRequest.System = systemMessages
 	}
 
-	// 自动给最后一条消息的最后一个内容块添加 cache_control
-	if len(claudeMessages) > 0 {
-		lastMessage := &claudeMessages[len(claudeMessages)-1]
+	// 智能添加 cache_control：只在可能达到1024 tokens的位置添加
+	// 策略：只标记倒数第2条消息（如果是 assistant，通常较长），不标记最后一条短用户消息
+	messagesToMark := []int{}
+	if len(claudeMessages) >= 2 {
+		// 检查倒数第2条是否是 assistant（通常比较长）
+		secondLastMsg := claudeMessages[len(claudeMessages)-2]
+		if secondLastMsg.Role == "assistant" {
+			messagesToMark = append(messagesToMark, len(claudeMessages)-2)
+			if common.DebugEnabled {
+				common.SysLog("Will add cache_control to second-to-last assistant message")
+			}
+		}
+	}
+
+	for _, msgIdx := range messagesToMark {
+		msg := &claudeMessages[msgIdx]
+
+		if common.DebugEnabled {
+			common.SysLog(fmt.Sprintf("Adding cache_control to message index %d, content type: %T", msgIdx, msg.Content))
+		}
 
 		// 处理数组类型的 content
-		if contentArray, ok := lastMessage.Content.([]dto.ClaudeMediaMessage); ok && len(contentArray) > 0 {
+		if contentArray, ok := msg.Content.([]dto.ClaudeMediaMessage); ok && len(contentArray) > 0 {
 			lastContent := &contentArray[len(contentArray)-1]
 			if lastContent.CacheControl == nil {
-				lastContent.CacheControl = json.RawMessage(`{"type":"ephemeral"}`)
+				lastContent.CacheControl = json.RawMessage(`{"type":"ephemeral","ttl":"1h"}`)
+				if common.DebugEnabled {
+					common.SysLog(fmt.Sprintf("Added cache_control (1h TTL) to message %d content array", msgIdx))
+				}
 			}
-			lastMessage.Content = contentArray
-		} else if contentStr, ok := lastMessage.Content.(string); ok && contentStr != "" {
+			msg.Content = contentArray
+		} else if contentStr, ok := msg.Content.(string); ok && contentStr != "" {
 			// 处理字符串类型的 content，转换为数组格式并添加 cache_control
-			lastMessage.Content = []dto.ClaudeMediaMessage{
+			msg.Content = []dto.ClaudeMediaMessage{
 				{
 					Type:         "text",
 					Text:         common.GetPointer[string](contentStr),
-					CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+					CacheControl: json.RawMessage(`{"type":"ephemeral","ttl":"1h"}`),
 				},
+			}
+			if common.DebugEnabled {
+				common.SysLog(fmt.Sprintf("Converted message %d string content to array with cache_control (1h TTL)", msgIdx))
 			}
 		}
 	}
 
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
+
+	if common.DebugEnabled {
+		debugJSON, _ := json.MarshalIndent(claudeRequest, "", "  ")
+		common.SysLog(fmt.Sprintf("Final Claude request:\n%s", string(debugJSON)))
+	}
+
 	return &claudeRequest, nil
 }
 

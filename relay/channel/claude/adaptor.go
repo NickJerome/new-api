@@ -68,9 +68,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func CommonClaudeHeadersOperation(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) {
 	// common headers operation
 	anthropicBeta := c.Request.Header.Get("anthropic-beta")
-	if anthropicBeta != "" {
-		req.Set("anthropic-beta", anthropicBeta)
+	if anthropicBeta == "" {
+		// 如果用户没有发送 anthropic-beta 头，自动添加 prompt-caching 支持
+		// 这是向后兼容的，对于没有使用 cache_control 的请求也安全
+		anthropicBeta = "prompt-caching-2024-07-31"
 	}
+	req.Set("anthropic-beta", anthropicBeta)
 	model_setting.GetClaudeSettings().WriteHeaders(info.OriginModelName, req)
 }
 
